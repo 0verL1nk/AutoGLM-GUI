@@ -38,11 +38,10 @@ AutoGLM 手机助手的现代化 Web 图形界面 - 让 AI 自动化操作 Andro
 uvx autoglm-gui --base-url http://localhost:8080/v1
 ```
 
-这是最简单的方式！`uvx` 会自动下载并运行最新版本，无需手动安装。
+需要提前安装 uv，[安装教程](https://docs.astral.sh/uv/getting-started/installation/)。
 
 ### 传统安装
 
-如果你需要离线使用或想要固定版本：
 
 ```bash
 # 方式 1: 通过 pip 安装
@@ -61,9 +60,8 @@ uv run autoglm-gui --base-url http://localhost:8080/v1
 ## 📖 使用说明
 
 1. **连接设备** - 启用 USB 调试并通过 ADB 连接设备
-2. **初始化** - 点击 "Initialize Agent" 并配置 API 设置
-3. **对话** - 描述你想要做什么（例如："打开微信，找到张三的聊天记录"）
-4. **观察** - Agent 会逐步执行操作
+2. **对话** - 描述你想要做什么（例如："去美团点一杯霸王茶姬的伯牙绝弦"）
+3. **观察** - Agent 会逐步执行操作
 
 ## 🛠️ 开发指南
 
@@ -84,4 +82,4 @@ Apache License 2.0
 
 ## 🙏 致谢
 
-本项目基于 [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) 构建，感谢 zai-org 团队在 AutoGLM 框架上的卓越工作。
+本项目基于 [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) 构建，感谢 zai-org 团队在 AutoGLM 上的卓越工作。
