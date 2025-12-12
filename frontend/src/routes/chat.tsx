@@ -538,6 +538,14 @@ function ChatComponent() {
                 setTapFeedback(`Tap failed: ${error}`);
                 setTimeout(() => setTapFeedback(null), 3000);
               }}
+              onSwipeSuccess={() => {
+                setTapFeedback('Swipe executed');
+                setTimeout(() => setTapFeedback(null), 2000);
+              }}
+              onSwipeError={error => {
+                setTapFeedback(`Swipe failed: ${error}`);
+                setTimeout(() => setTapFeedback(null), 3000);
+              }}
               fallbackTimeout={100000}
             />
           </>

@@ -10,6 +10,8 @@ interface ScrcpyPlayerProps {
   enableControl?: boolean; // Enable click control
   onTapSuccess?: () => void; // Callback on successful tap
   onTapError?: (error: string) => void; // Callback on tap error
+  onSwipeSuccess?: () => void; // Callback on successful swipe
+  onSwipeError?: (error: string) => void; // Callback on swipe error
 }
 
 export function ScrcpyPlayer({
@@ -19,6 +21,8 @@ export function ScrcpyPlayer({
   enableControl = false,
   onTapSuccess,
   onTapError,
+  onSwipeSuccess,
+  onSwipeError,
 }: ScrcpyPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const jmuxerRef = useRef<any>(null);
@@ -281,12 +285,12 @@ export function ScrcpyPlayer({
       );
 
       if (result.success) {
-        onTapSuccess?.();
+        onSwipeSuccess?.();
       } else {
-        onTapError?.(result.error || 'Swipe failed');
+        onSwipeError?.(result.error || 'Swipe failed');
       }
     } catch (error) {
-      onTapError?.(String(error));
+      onSwipeError?.(String(error));
     }
   };
 
