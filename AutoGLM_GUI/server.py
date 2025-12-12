@@ -121,6 +121,21 @@ class TapResponse(BaseModel):
     error: str | None = None
 
 
+class SwipeRequest(BaseModel):
+    start_x: int
+    start_y: int
+    end_x: int
+    end_y: int
+    duration_ms: int | None = None
+    device_id: str | None = None
+    delay: float = 0.0
+
+
+class SwipeResponse(BaseModel):
+    success: bool
+    error: str | None = None
+
+
 # API 端点
 @app.post("/api/init")
 def init_agent(request: InitRequest) -> dict:
@@ -364,6 +379,27 @@ def control_tap(request: TapRequest) -> TapResponse:
         return TapResponse(success=True)
     except Exception as e:
         return TapResponse(success=False, error=str(e))
+
+
+@app.post("/api/control/swipe", response_model=SwipeResponse)
+def control_swipe(request: SwipeRequest) -> SwipeResponse:
+    """Execute swipe from start to end coordinates."""
+    try:
+        from phone_agent.adb import swipe
+
+        swipe(
+            start_x=request.start_x,
+            start_y=request.start_y,
+            end_x=request.end_x,
+            end_y=request.end_y,
+            duration_ms=request.duration_ms,
+            device_id=request.device_id,
+            delay=request.delay
+        )
+
+        return SwipeResponse(success=True)
+    except Exception as e:
+        return SwipeResponse(success=False, error=str(e))
 
 
 @app.websocket("/api/video/stream")

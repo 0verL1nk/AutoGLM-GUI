@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import jMuxer from 'jmuxer';
-import { sendTap, getScreenshot } from '../api';
+import { sendTap, sendSwipe, getScreenshot } from '../api';
 
 interface ScrcpyPlayerProps {
   className?: string;
@@ -36,6 +36,11 @@ export function ScrcpyPlayer({
     y: number;
   }
   const [ripples, setRipples] = useState<RippleEffect[]>([]);
+
+  // Swipe detection state
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const [swipeLine, setSwipeLine] = useState<{ id: number; startX: number; startY: number; endX: number; endY: number } | null>(null);
 
   // Device actual resolution (not video stream resolution)
   const [deviceResolution, setDeviceResolution] = useState<{
@@ -131,6 +136,147 @@ export function ScrcpyPlayer({
   };
 
   /**
+   * Handle mouse down event for swipe detection
+   */
+  const handleMouseDown = (event: React.MouseEvent<HTMLVideoElement>) => {
+    if (!enableControl || !videoRef.current || status !== 'connected') return;
+
+    const rect = videoRef.current.getBoundingClientRect();
+    const startX = event.clientX - rect.left;
+    const startY = event.clientY - rect.top;
+
+    isDraggingRef.current = true;
+    dragStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now()
+    };
+  };
+
+  /**
+   * Handle mouse move event for swipe visualization
+   */
+  const handleMouseMove = (event: React.MouseEvent<HTMLVideoElement>) => {
+    if (!isDraggingRef.current || !dragStartRef.current) return;
+
+    setSwipeLine({
+      id: Date.now(),
+      startX: dragStartRef.current.x,
+      startY: dragStartRef.current.y,
+      endX: event.clientX,
+      endY: event.clientY
+    });
+  };
+
+  /**
+   * Handle mouse up event for swipe execution
+   */
+  const handleMouseUp = async (event: React.MouseEvent<HTMLVideoElement>) => {
+    if (!isDraggingRef.current || !dragStartRef.current) return;
+
+    const dragEnd = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now()
+    };
+
+    const deltaX = dragEnd.x - dragStartRef.current.x;
+    const deltaY = dragEnd.y - dragStartRef.current.y;
+    const deltaTime = dragEnd.time - dragStartRef.current.time;
+
+    // Clear swipe line
+    setSwipeLine(null);
+    isDraggingRef.current = false;
+
+    // Check if it's a tap (short movement, short duration)
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    if (distance < 10 && deltaTime < 200) {
+      // It's a tap
+      handleVideoClick(event);
+      dragStartRef.current = null;
+      return;
+    }
+
+    // Check if it's a valid swipe (minimum distance and reasonable duration)
+    if (distance < 30 || deltaTime < 100 || deltaTime > 2000) {
+      console.log('[ScrcpyPlayer] Invalid swipe: distance=', distance, 'duration=', deltaTime);
+      dragStartRef.current = null;
+      return;
+    }
+
+    // It's a swipe
+    await executeSwipe(dragStartRef.current, dragEnd);
+    dragStartRef.current = null;
+  };
+
+  /**
+   * Execute swipe gesture
+   */
+  const executeSwipe = async (
+    start: { x: number; y: number; time: number },
+    end: { x: number; y: number; time: number }
+  ) => {
+    if (!videoRef.current || !deviceResolution) {
+      console.warn('[ScrcpyPlayer] Cannot execute swipe: video or device resolution not available');
+      return;
+    }
+
+    const rect = videoRef.current.getBoundingClientRect();
+
+    // Convert start and end coordinates to device coordinates
+    const startDeviceCoords = getDeviceCoordinates(
+      start.x - rect.left,
+      start.y - rect.top,
+      videoRef.current
+    );
+    const endDeviceCoords = getDeviceCoordinates(
+      end.x - rect.left,
+      end.y - rect.top,
+      videoRef.current
+    );
+
+    if (!startDeviceCoords || !endDeviceCoords) {
+      console.warn('[ScrcpyPlayer] Cannot execute swipe: coordinate transformation failed');
+      return;
+    }
+
+    // Scale from video stream resolution to device actual resolution
+    const videoWidth = videoRef.current.videoWidth;
+    const videoHeight = videoRef.current.videoHeight;
+    const scaleX = deviceResolution.width / videoWidth;
+    const scaleY = deviceResolution.height / videoHeight;
+
+    const actualStartX = Math.round(startDeviceCoords.x * scaleX);
+    const actualStartY = Math.round(startDeviceCoords.y * scaleY);
+    const actualEndX = Math.round(endDeviceCoords.x * scaleX);
+    const actualEndY = Math.round(endDeviceCoords.y * scaleY);
+
+    // Calculate duration based on distance and time
+    const distance = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    );
+    const durationMs = Math.round(Math.min(Math.max(300, distance * 2), 1000));
+
+    try {
+      const result = await sendSwipe(
+        actualStartX,
+        actualStartY,
+        actualEndX,
+        actualEndY,
+        durationMs
+      );
+
+      if (result.success) {
+        onTapSuccess?.();
+      } else {
+        onTapError?.(result.error || 'Swipe failed');
+      }
+    } catch (error) {
+      onTapError?.(String(error));
+    }
+  };
+
+  /**
    * Handle video click event
    */
   const handleVideoClick = async (
@@ -141,7 +287,6 @@ export function ScrcpyPlayer({
 
     // Guard: Video not ready
     if (!videoRef.current || status !== 'connected') {
-      console.warn('[ScrcpyPlayer] Video not ready for control');
       return;
     }
 
@@ -150,13 +295,11 @@ export function ScrcpyPlayer({
       videoRef.current.videoWidth === 0 ||
       videoRef.current.videoHeight === 0
     ) {
-      console.warn('[ScrcpyPlayer] Video dimensions not available');
       return;
     }
 
     // Guard: Device resolution not available
     if (!deviceResolution) {
-      console.warn('[ScrcpyPlayer] Device resolution not available yet');
       return;
     }
 
@@ -180,13 +323,6 @@ export function ScrcpyPlayer({
     const actualDeviceX = Math.round(deviceCoords.x * scaleX);
     const actualDeviceY = Math.round(deviceCoords.y * scaleY);
 
-    console.log(`[ScrcpyPlayer] Coordinate scaling:
-      Video stream: ${videoWidth}x${videoHeight}
-      Device actual: ${deviceResolution.width}x${deviceResolution.height}
-      Scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}
-      Video coords: (${deviceCoords.x}, ${deviceCoords.y})
-      Device coords: (${actualDeviceX}, ${actualDeviceY})`);
-
     // Add ripple effect (use viewport coordinates for fixed positioning)
     const rippleId = Date.now();
     setRipples(prev => [
@@ -203,14 +339,11 @@ export function ScrcpyPlayer({
     try {
       const result = await sendTap(actualDeviceX, actualDeviceY);
       if (result.success) {
-        console.log('[ScrcpyPlayer] Tap successful');
         onTapSuccess?.();
       } else {
-        console.error('[ScrcpyPlayer] Tap failed:', result.error);
         onTapError?.(result.error || 'Unknown error');
       }
     } catch (error) {
-      console.error('[ScrcpyPlayer] Tap request failed:', error);
       onTapError?.(String(error));
     }
   };
@@ -515,12 +648,38 @@ export function ScrcpyPlayer({
         autoPlay
         muted
         playsInline
-        onClick={handleVideoClick}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => {
+          // Cancel drag if mouse leaves video area
+          if (isDraggingRef.current) {
+            isDraggingRef.current = false;
+            setSwipeLine(null);
+          }
+        }}
         className={`max-w-full max-h-full object-contain ${
           enableControl ? 'cursor-pointer' : ''
         }`}
         style={{ backgroundColor: '#000' }}
       />
+
+      {/* Swipe line visualization */}
+      {enableControl && swipeLine && (
+        <svg className="fixed inset-0 pointer-events-none z-40">
+          <line
+            x1={swipeLine.startX}
+            y1={swipeLine.startY}
+            x2={swipeLine.endX}
+            y2={swipeLine.endY}
+            stroke="rgba(59, 130, 246, 0.8)"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <circle cx={swipeLine.startX} cy={swipeLine.startY} r="6" fill="rgba(59, 130, 246, 0.8)" />
+          <circle cx={swipeLine.endX} cy={swipeLine.endY} r="6" fill="rgba(239, 68, 68, 0.8)" />
+        </svg>
+      )}
 
       {/* Ripple effects overlay */}
       {enableControl &&

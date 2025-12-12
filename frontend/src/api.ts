@@ -81,6 +81,21 @@ export interface TapResponse {
   error?: string;
 }
 
+export interface SwipeRequest {
+  start_x: number;
+  start_y: number;
+  end_x: number;
+  end_y: number;
+  duration_ms?: number;
+  device_id?: string | null;
+  delay?: number;
+}
+
+export interface SwipeResponse {
+  success: boolean;
+  error?: string;
+}
+
 export async function initAgent(
   config?: InitRequest
 ): Promise<{ success: boolean; message: string }> {
@@ -201,4 +216,32 @@ export async function sendTap(
     delay,
   });
   return res.data;
+}
+
+export async function sendSwipe(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  durationMs?: number,
+  deviceId?: string | null,
+  delay: number = 0
+): Promise<SwipeResponse> {
+  const swipeData = {
+    start_x: Math.round(startX),
+    start_y: Math.round(startY),
+    end_x: Math.round(endX),
+    end_y: Math.round(endY),
+    duration_ms: Math.round(durationMs || 300),
+    device_id: deviceId ?? null,
+    delay: Math.round(delay * 1000) / 1000,
+  };
+
+  try {
+    const res = await axios.post<SwipeResponse>('/api/control/swipe', swipeData);
+    return res.data;
+  } catch (error) {
+    console.error('[API] Swipe request failed:', error);
+    throw error;
+  }
 }
