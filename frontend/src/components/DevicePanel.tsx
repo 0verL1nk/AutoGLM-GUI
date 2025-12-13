@@ -1,7 +1,12 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { ScrcpyPlayer } from './ScrcpyPlayer';
-import type { ScreenshotResponse } from '../api';
-import { getScreenshot } from '../api';
+import type {
+  ScreenshotResponse,
+  StepEvent,
+  DoneEvent,
+  ErrorEvent,
+} from '../api';
+import { getScreenshot, initAgent, resetChat, sendMessageStream } from '../api';
 
 interface Message {
   id: string;
@@ -15,45 +20,187 @@ interface Message {
   isStreaming?: boolean;
 }
 
-interface DeviceState {
-  messages: Message[];
-  loading: boolean;
-  error: string | null;
-  initialized: boolean;
-  chatStream: { close: () => void } | null; // 聊天流
-  videoStream: { close: () => void } | null; // 视频流
-  screenshot: ScreenshotResponse | null;
-  useVideoStream: boolean;
-  videoStreamFailed: boolean;
-  displayMode: 'auto' | 'video' | 'screenshot';
-  tapFeedback: string | null;
+// 全局配置接口
+interface GlobalConfig {
+  baseUrl: string;
+  apiKey: string;
+  modelName: string;
 }
-
+// DevicePanel Props 接口
 interface DevicePanelProps {
   deviceId: string;
   deviceName: string;
-  deviceState: DeviceState;
-  input: string;
-  onInputChange: (value: string) => void;
-  onSendMessage: () => void;
-  onReset: () => void;
-  onInitialize: () => void;
-  updateDeviceState: (deviceId: string, updates: Partial<DeviceState>) => void;
+  config: GlobalConfig;
+  isVisible: boolean;
 }
 
 export function DevicePanel({
   deviceId,
   deviceName,
-  deviceState,
-  input,
-  onInputChange,
-  onSendMessage,
-  onReset,
-  onInitialize,
-  updateDeviceState,
+  config,
 }: DevicePanelProps) {
+  // ========== 内部状态管理 ==========
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
+  const [screenshot, setScreenshot] = useState<ScreenshotResponse | null>(null);
+  const [useVideoStream, setUseVideoStream] = useState(true);
+  const [videoStreamFailed, setVideoStreamFailed] = useState(false);
+  const [displayMode, setDisplayMode] = useState<
+    'auto' | 'video' | 'screenshot'
+  >('auto');
+  const [tapFeedback, setTapFeedback] = useState<string | null>(null);
+
+  // Refs for resource cleanup
+  const chatStreamRef = useRef<{ close: () => void } | null>(null);
+  const videoStreamRef = useRef<{ close: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const screenshotFetchingRef = useRef(false);
+
+  // ========== 内部业务逻辑 ==========
+
+  // 初始化 Agent
+  const handleInit = useCallback(async () => {
+    if (!config) {
+      console.warn('[DevicePanel] config is required for handleInit');
+      return;
+    }
+
+    try {
+      await initAgent({
+        model_config: {
+          base_url: config.baseUrl || undefined,
+          api_key: config.apiKey || undefined,
+          model_name: config.modelName || undefined,
+        },
+        agent_config: {
+          device_id: deviceId,
+        },
+      });
+      setInitialized(true);
+      setError(null);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : '初始化失败，请检查配置';
+      setError(errorMessage);
+    }
+  }, [deviceId, config]);
+
+  // 发送消息（SSE 流处理）
+  const handleSend = useCallback(async () => {
+    const inputValue = input.trim();
+    if (!inputValue || loading) return;
+
+    if (!initialized) {
+      await handleInit();
+    }
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: inputValue,
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setLoading(true);
+    setError(null);
+
+    // 为每个请求创建独立的数组，避免多设备并发时的数据混乱
+    const thinkingList: string[] = [];
+    const actionsList: Record<string, unknown>[] = [];
+
+    const agentMessageId = (Date.now() + 1).toString();
+    const agentMessage: Message = {
+      id: agentMessageId,
+      role: 'agent',
+      content: '',
+      timestamp: new Date(),
+      thinking: [],
+      actions: [],
+      isStreaming: true,
+    };
+
+    setMessages(prev => [...prev, agentMessage]);
+
+    // 启动流式接收（deviceId 自动正确，无闭包陷阱）
+    const stream = sendMessageStream(
+      userMessage.content,
+      deviceId,
+      // onStep
+      (event: StepEvent) => {
+        thinkingList.push(event.thinking);
+        actionsList.push(event.action);
+
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === agentMessageId
+              ? {
+                  ...msg,
+                  thinking: [...thinkingList],
+                  actions: [...actionsList],
+                  steps: event.step,
+                }
+              : msg
+          )
+        );
+      },
+      // onDone
+      (event: DoneEvent) => {
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === agentMessageId
+              ? {
+                  ...msg,
+                  content: event.message,
+                  success: event.success,
+                  isStreaming: false,
+                }
+              : msg
+          )
+        );
+        setLoading(false);
+        chatStreamRef.current = null;
+      },
+      // onError
+      (event: ErrorEvent) => {
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === agentMessageId
+              ? {
+                  ...msg,
+                  content: `错误: ${event.message}`,
+                  success: false,
+                  isStreaming: false,
+                }
+              : msg
+          )
+        );
+        setLoading(false);
+        setError(event.message);
+        chatStreamRef.current = null;
+      }
+    );
+
+    chatStreamRef.current = stream;
+  }, [input, loading, initialized, deviceId, handleInit]);
+
+  // 重置对话
+  const handleReset = useCallback(async () => {
+    if (chatStreamRef.current) {
+      chatStreamRef.current.close();
+    }
+
+    setMessages([]);
+    setLoading(false);
+    setError(null);
+    chatStreamRef.current = null;
+
+    await resetChat(deviceId);
+  }, [deviceId]);
 
   // 滚动到底部
   const scrollToBottom = () => {
@@ -62,15 +209,34 @@ export function DevicePanel({
 
   useEffect(() => {
     scrollToBottom();
-  }, [deviceState.messages]);
+  }, [messages]);
+
+  // ========== 资源清理（组件卸载时） ==========
+  useEffect(() => {
+    return () => {
+      console.log(`[DevicePanel] 设备 ${deviceId} 卸载，清理资源`);
+
+      // 关闭聊天流
+      if (chatStreamRef.current) {
+        chatStreamRef.current.close();
+        chatStreamRef.current = null;
+      }
+
+      // 关闭视频流
+      if (videoStreamRef.current) {
+        videoStreamRef.current.close();
+        videoStreamRef.current = null;
+      }
+    };
+  }, [deviceId]);
 
   // 截图轮询
   useEffect(() => {
     if (!deviceId) return;
 
     const shouldPollScreenshots =
-      deviceState.displayMode === 'screenshot' ||
-      (deviceState.displayMode === 'auto' && deviceState.videoStreamFailed);
+      displayMode === 'screenshot' ||
+      (displayMode === 'auto' && videoStreamFailed);
 
     if (!shouldPollScreenshots) {
       return;
@@ -83,7 +249,7 @@ export function DevicePanel({
       try {
         const data = await getScreenshot(deviceId);
         if (data.success) {
-          updateDeviceState(deviceId, { screenshot: data });
+          setScreenshot(data);
         }
       } catch (e) {
         console.error('Failed to fetch screenshot:', e);
@@ -96,35 +262,28 @@ export function DevicePanel({
     const interval = setInterval(fetchScreenshot, 500);
 
     return () => clearInterval(interval);
-  }, [
-    deviceId,
-    deviceState.videoStreamFailed,
-    deviceState.displayMode,
-    updateDeviceState,
-  ]);
+  }, [deviceId, videoStreamFailed, displayMode]);
 
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      onSendMessage();
+      handleSend();
     }
   };
 
   // 处理视频流就绪事件
   const handleVideoStreamReady = useCallback(
     (stream: { close: () => void } | null) => {
-      updateDeviceState(deviceId, { videoStream: stream });
+      videoStreamRef.current = stream;
     },
-    [deviceId, updateDeviceState]
+    []
   );
 
   // 处理视频流降级到截图模式
   const handleFallback = useCallback(() => {
-    updateDeviceState(deviceId, {
-      videoStreamFailed: true,
-      useVideoStream: false,
-    });
-  }, [deviceId, updateDeviceState]);
+    setVideoStreamFailed(true);
+    setUseVideoStream(false);
+  }, []);
 
   return (
     <div className="flex-1 flex gap-4 p-4 items-center justify-center">
@@ -139,9 +298,9 @@ export function DevicePanel({
             </p>
           </div>
           <div className="flex gap-2">
-            {!deviceState.initialized ? (
+            {!initialized ? (
               <button
-                onClick={onInitialize}
+                onClick={handleInit}
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm"
               >
                 初始化设备
@@ -152,7 +311,7 @@ export function DevicePanel({
               </span>
             )}
             <button
-              onClick={onReset}
+              onClick={handleReset}
               className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm"
             >
               重置
@@ -161,22 +320,22 @@ export function DevicePanel({
         </div>
 
         {/* 错误提示 */}
-        {deviceState.error && (
+        {error && (
           <div className="mx-4 mt-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded-lg text-sm">
-            {deviceState.error}
+            {error}
           </div>
         )}
 
         {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {deviceState.messages.length === 0 ? (
+          {messages.length === 0 ? (
             <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
               <p className="text-lg">设备已选择</p>
               <p className="text-sm mt-2">输入任务描述，让 AI 帮你操作手机</p>
             </div>
           ) : null}
 
-          {deviceState.messages.map(message => (
+          {messages.map(message => (
             <div
               key={message.id}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -249,17 +408,15 @@ export function DevicePanel({
             <input
               type="text"
               value={input}
-              onChange={e => onInputChange(e.target.value)}
+              onChange={e => setInput(e.target.value)}
               onKeyDown={handleInputKeyDown}
-              placeholder={
-                !deviceState.initialized ? '请先初始化设备' : '输入任务描述...'
-              }
-              disabled={deviceState.loading}
+              placeholder={!initialized ? '请先初始化设备' : '输入任务描述...'}
+              disabled={loading}
               className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <button
-              onClick={onSendMessage}
-              disabled={deviceState.loading || !input.trim()}
+              onClick={handleSend}
+              disabled={loading || !input.trim()}
               className="px-6 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               发送
@@ -273,9 +430,9 @@ export function DevicePanel({
         {/* Mode Switch Button */}
         <div className="absolute top-2 right-2 z-10 flex gap-1 bg-black/70 rounded-lg p-1">
           <button
-            onClick={() => updateDeviceState(deviceId, { displayMode: 'auto' })}
+            onClick={() => setDisplayMode('auto')}
             className={`px-3 py-1 text-xs rounded transition-colors ${
-              deviceState.displayMode === 'auto'
+              displayMode === 'auto'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
@@ -283,11 +440,9 @@ export function DevicePanel({
             自动
           </button>
           <button
-            onClick={() =>
-              updateDeviceState(deviceId, { displayMode: 'video' })
-            }
+            onClick={() => setDisplayMode('video')}
             className={`px-3 py-1 text-xs rounded transition-colors ${
-              deviceState.displayMode === 'video'
+              displayMode === 'video'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
@@ -295,11 +450,9 @@ export function DevicePanel({
             视频流
           </button>
           <button
-            onClick={() =>
-              updateDeviceState(deviceId, { displayMode: 'screenshot' })
-            }
+            onClick={() => setDisplayMode('screenshot')}
             className={`px-3 py-1 text-xs rounded transition-colors ${
-              deviceState.displayMode === 'screenshot'
+              displayMode === 'screenshot'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
@@ -308,14 +461,12 @@ export function DevicePanel({
           </button>
         </div>
 
-        {deviceState.displayMode === 'video' ||
-        (deviceState.displayMode === 'auto' &&
-          deviceState.useVideoStream &&
-          !deviceState.videoStreamFailed) ? (
+        {displayMode === 'video' ||
+        (displayMode === 'auto' && useVideoStream && !videoStreamFailed) ? (
           <>
-            {deviceState.tapFeedback && (
+            {tapFeedback && (
               <div className="absolute top-14 right-2 z-20 px-3 py-2 bg-blue-500 text-white text-sm rounded-lg shadow-lg">
-                {deviceState.tapFeedback}
+                {tapFeedback}
               </div>
             )}
 
@@ -325,38 +476,20 @@ export function DevicePanel({
               enableControl={true}
               onFallback={handleFallback}
               onTapSuccess={() => {
-                updateDeviceState(deviceId, { tapFeedback: 'Tap executed' });
-                setTimeout(
-                  () => updateDeviceState(deviceId, { tapFeedback: null }),
-                  2000
-                );
+                setTapFeedback('Tap executed');
+                setTimeout(() => setTapFeedback(null), 2000);
               }}
               onTapError={error => {
-                updateDeviceState(deviceId, {
-                  tapFeedback: `Tap failed: ${error}`,
-                });
-                setTimeout(
-                  () => updateDeviceState(deviceId, { tapFeedback: null }),
-                  3000
-                );
+                setTapFeedback(`Tap failed: ${error}`);
+                setTimeout(() => setTapFeedback(null), 3000);
               }}
               onSwipeSuccess={() => {
-                updateDeviceState(deviceId, {
-                  tapFeedback: 'Swipe executed',
-                });
-                setTimeout(
-                  () => updateDeviceState(deviceId, { tapFeedback: null }),
-                  2000
-                );
+                setTapFeedback('Swipe executed');
+                setTimeout(() => setTapFeedback(null), 2000);
               }}
               onSwipeError={error => {
-                updateDeviceState(deviceId, {
-                  tapFeedback: `Swipe failed: ${error}`,
-                });
-                setTimeout(
-                  () => updateDeviceState(deviceId, { tapFeedback: null }),
-                  3000
-                );
+                setTapFeedback(`Swipe failed: ${error}`);
+                setTimeout(() => setTapFeedback(null), 3000);
               }}
               onStreamReady={handleVideoStreamReady}
               fallbackTimeout={100000}
@@ -364,41 +497,35 @@ export function DevicePanel({
           </>
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-900">
-            {deviceState.screenshot && deviceState.screenshot.success ? (
+            {screenshot && screenshot.success ? (
               <div className="relative w-full h-full flex items-center justify-center">
                 <img
-                  src={`data:image/png;base64,${deviceState.screenshot.image}`}
+                  src={`data:image/png;base64,${screenshot.image}`}
                   alt="Device Screenshot"
                   className="max-w-full max-h-full object-contain"
                   style={{
                     width:
-                      deviceState.screenshot.width >
-                      deviceState.screenshot.height
-                        ? '100%'
-                        : 'auto',
+                      screenshot.width > screenshot.height ? '100%' : 'auto',
                     height:
-                      deviceState.screenshot.width >
-                      deviceState.screenshot.height
-                        ? 'auto'
-                        : '100%',
+                      screenshot.width > screenshot.height ? 'auto' : '100%',
                   }}
                 />
-                {deviceState.screenshot.is_sensitive && (
+                {screenshot.is_sensitive && (
                   <div className="absolute top-12 right-2 px-2 py-1 bg-yellow-500 text-white text-xs rounded">
                     敏感内容
                   </div>
                 )}
                 <div className="absolute bottom-2 left-2 px-2 py-1 bg-blue-500 text-white text-xs rounded">
                   截图模式 (0.5s 刷新)
-                  {deviceState.displayMode === 'auto' &&
-                    deviceState.videoStreamFailed &&
+                  {displayMode === 'auto' &&
+                    videoStreamFailed &&
                     ' - 视频流不可用'}
                 </div>
               </div>
-            ) : deviceState.screenshot?.error ? (
+            ) : screenshot?.error ? (
               <div className="text-center text-red-500 dark:text-red-400">
                 <p className="mb-2">截图失败</p>
-                <p className="text-xs">{deviceState.screenshot.error}</p>
+                <p className="text-xs">{screenshot.error}</p>
               </div>
             ) : (
               <div className="text-center text-gray-500 dark:text-gray-400">
