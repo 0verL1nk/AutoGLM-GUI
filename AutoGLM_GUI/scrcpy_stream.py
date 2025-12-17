@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from AutoGLM_GUI.exceptions import DeviceNotAvailableError
 from AutoGLM_GUI.logger import logger
 from AutoGLM_GUI.platform_utils import is_windows, run_cmd_silently, spawn_process
 
@@ -87,6 +88,54 @@ class ScrcpyStreamer:
             "scrcpy-server not found. Please put scrcpy-server-v3.3.3 in project root or set SCRCPY_SERVER_PATH."
         )
 
+    async def _check_device_available(self) -> None:
+        """Check if the device is available before starting scrcpy.
+
+        Raises:
+            DeviceNotAvailableError: If device is not reachable
+        """
+        cmd = ["adb"]
+        if self.device_id:
+            cmd.extend(["-s", self.device_id])
+        cmd.append("get-state")
+
+        try:
+            result = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=5.0)
+
+            state = stdout.decode().strip()
+            error_output = stderr.decode().strip()
+
+            # Check for common error patterns
+            if "not found" in error_output.lower() or "offline" in error_output.lower():
+                raise DeviceNotAvailableError(
+                    f"Device {self.device_id} is not available: {error_output}"
+                )
+
+            if state != "device":
+                raise DeviceNotAvailableError(
+                    f"Device {self.device_id} is not available (state: {state or 'offline'})"
+                )
+
+            logger.debug(f"Device {self.device_id} is available (state: {state})")
+
+        except asyncio.TimeoutError:
+            raise DeviceNotAvailableError(
+                f"Device {self.device_id} connection timed out"
+            )
+        except FileNotFoundError:
+            raise DeviceNotAvailableError("ADB executable not found")
+        except DeviceNotAvailableError:
+            raise
+        except Exception as e:
+            raise DeviceNotAvailableError(
+                f"Failed to check device {self.device_id}: {e}"
+            )
+
     async def start(self) -> None:
         """Start scrcpy server and establish connection."""
         # Clear NAL reading buffer to ensure clean state
@@ -94,7 +143,12 @@ class ScrcpyStreamer:
         logger.debug("Cleared NAL read buffer")
 
         try:
-            # 0. Kill existing scrcpy server processes on device
+            # 0. Check device availability first
+            logger.info(f"Checking device {self.device_id} availability...")
+            await self._check_device_available()
+            logger.info(f"Device {self.device_id} is available")
+
+            # 1. Kill existing scrcpy server processes on device
             logger.info("Cleaning up existing scrcpy processes...")
             await self._cleanup_existing_server()
 
