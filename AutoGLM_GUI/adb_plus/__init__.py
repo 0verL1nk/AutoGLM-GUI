@@ -4,6 +4,7 @@ from .keyboard_installer import ADBKeyboardInstaller
 from .screenshot import Screenshot, capture_screenshot
 from .touch import touch_down, touch_move, touch_up
 from .ip import get_wifi_ip
+from .serial import get_device_serial
 
 __all__ = [
     "ADBKeyboardInstaller",
@@ -13,4 +14,5 @@ __all__ = [
     "touch_move",
     "touch_up",
     "get_wifi_ip",
+    "get_device_serial",
 ]

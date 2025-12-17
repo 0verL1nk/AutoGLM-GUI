@@ -2,12 +2,14 @@
 
 from fastapi import APIRouter
 
-from AutoGLM_GUI.adb_plus import get_wifi_ip
+from AutoGLM_GUI.adb_plus import get_wifi_ip, get_device_serial
 
 from AutoGLM_GUI.schemas import (
     DeviceListResponse,
     WiFiConnectRequest,
     WiFiConnectResponse,
+    WiFiDisconnectRequest,
+    WiFiDisconnectResponse,
 )
 from AutoGLM_GUI.state import agents
 
@@ -17,22 +19,28 @@ router = APIRouter()
 @router.get("/api/devices", response_model=DeviceListResponse)
 def list_devices() -> DeviceListResponse:
     """列出所有 ADB 设备。"""
-    from phone_agent.adb import list_devices as adb_list
+    from phone_agent.adb import list_devices as adb_list, ADBConnection
 
     adb_devices = adb_list()
+    conn = ADBConnection()
 
-    return DeviceListResponse(
-        devices=[
+    devices_with_serial = []
+    for d in adb_devices:
+        # 使用 adb_plus 的 get_device_serial 获取真实序列号
+        serial = get_device_serial(d.device_id, conn.adb_path)
+
+        devices_with_serial.append(
             {
                 "id": d.device_id,
                 "model": d.model or "Unknown",
                 "status": d.status,
                 "connection_type": d.connection_type.value,
                 "is_initialized": d.device_id in agents,
+                "serial": serial,  # 真实序列号
             }
-            for d in adb_devices
-        ]
-    )
+        )
+
+    return DeviceListResponse(devices=devices_with_serial)
 
 
 @router.post("/api/devices/connect_wifi", response_model=WiFiConnectResponse)
@@ -88,9 +96,31 @@ def connect_wifi(request: WiFiConnectRequest) -> WiFiConnectResponse:
             error="connect",
         )
 
+    # 4) 成功连接后,断开原来的 USB 连接
+    try:
+        conn.disconnect(device_info.device_id)
+    except Exception:
+        # 断开失败不影响返回结果,因为 WiFi 已经连接成功
+        pass
+
     return WiFiConnectResponse(
         success=True,
         message="Switched to WiFi successfully",
         device_id=address,
         address=address,
+    )
+
+
+@router.post("/api/devices/disconnect_wifi", response_model=WiFiDisconnectResponse)
+def disconnect_wifi(request: WiFiDisconnectRequest) -> WiFiDisconnectResponse:
+    """断开 WiFi 连接。"""
+    from phone_agent.adb import ADBConnection
+
+    conn = ADBConnection()
+    ok, msg = conn.disconnect(request.device_id)
+
+    return WiFiDisconnectResponse(
+        success=ok,
+        message=msg,
+        error=None if ok else "disconnect_failed",
     )

@@ -155,3 +155,13 @@ class WiFiConnectResponse(BaseModel):
     device_id: str | None = None
     address: str | None = None
     error: str | None = None
+
+
+class WiFiDisconnectRequest(BaseModel):
+    device_id: str
+
+
+class WiFiDisconnectResponse(BaseModel):
+    success: bool
+    message: str
+    error: str | None = None
