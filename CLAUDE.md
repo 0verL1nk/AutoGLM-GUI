@@ -140,6 +140,62 @@ The frontend uses these API endpoints for configuration management:
 - `POST /api/config` - Save configuration to file
 - `DELETE /api/config` - Delete configuration file
 
+## ADB Keyboard Auto-Management
+
+### Automatic Installation
+
+AutoGLM-GUI automatically checks and installs ADB Keyboard when the Phone Agent is initialized:
+
+1. **Per-Device Check**: Checks ADB Keyboard status only for the device being initialized
+2. **Status Check**: Checks installation and enablement status on the device
+3. **Auto Install**: If not installed, automatically installs the APK
+4. **Auto Enable**: If not enabled, automatically enables the IME
+5. **Logging**: All operations are logged to the log file
+
+### APK Sources
+
+Priority order:
+1. **Bundled APK**: `AutoGLM_GUI/resources/apks/ADBKeyboard.apk` (included in wheel)
+2. **Cached APK**: `~/.cache/autoglm/ADBKeyboard.apk`
+3. **GitHub Download**: https://github.com/senzhk/ADBKeyBoard
+
+### Auto-Setup Timing
+
+ADB Keyboard is now checked and installed automatically when the frontend initializes the Phone Agent via `/api/init` endpoint, not during server startup. This provides:
+
+- **Faster server startup**: No device scanning during startup
+- **Per-device checking**: Only checks devices when they are actually used
+- **Better user experience**: Installation progress is visible in the frontend
+
+### Manual Installation
+
+If automatic installation fails, you can install manually:
+
+1. Download APK: https://github.com/senzhk/ADBKeyBoard/releases
+2. Install: `adb install -r ADBKeyboard.apk`
+3. Enable: Settings → Language & Input → Enable "ADB Keyboard"
+
+### License Notice
+
+ADB Keyboard uses the **GPL-2.0** license, which differs from AutoGLM-GUI's MIT license.
+The APK file is bundled as an independent third-party component. When using it, you must comply with GPL-2.0 terms.
+
+See: `AutoGLM_GUI/resources/apks/ADBKeyBoard.LICENSE.txt`
+
+### Troubleshooting
+
+**Issue**: Xiaomi devices cannot enable ADB Keyboard without root
+
+**Solution**: See https://github.com/zai-org/Open-AutoGLM/issues/24
+
+**Issue**: APK download fails (network unreachable)
+
+**Solution**: The APK is bundled in the wheel, no download needed under normal circumstances
+
+**Issue**: Device doesn't support ADB Keyboard
+
+**Solution**: Check if the device allows third-party input methods, or try rooting the device
+
 ## Architecture
 
 ### Request Flow
@@ -345,3 +401,4 @@ scripts/build.py       # Build automation
    - Test wheel: `uvx --from dist/autoglm_gui-*.whl autoglm-gui`
    - Publish: `uv publish`
 - phone_agent 下面是第三方的代码，目前通过直接拷贝代码的情况下进行引用，为了保持兼容性，任何时候不能修改里面的代码
+- 运行 adb 命令的时候，尽量使用AutoGLM_GUI/platform_utils.py 下面的代码执行命令，为了更好的兼容性

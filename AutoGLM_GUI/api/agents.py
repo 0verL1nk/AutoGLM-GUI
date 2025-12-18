@@ -40,6 +40,9 @@ router = APIRouter()
 @router.post("/api/init")
 def init_agent(request: InitRequest) -> dict:
     """初始化 PhoneAgent（多设备支持）。"""
+    from AutoGLM_GUI.adb_plus import ADBKeyboardInstaller
+    from AutoGLM_GUI.logger import logger
+
     req_model_config = request.model or APIModelConfig()
     req_agent_config = request.agent or APIAgentConfig()
 
@@ -49,6 +52,21 @@ def init_agent(request: InitRequest) -> dict:
             status_code=400, detail="device_id is required in agent_config"
         )
     config.refresh_from_env()
+
+    # 检查并自动安装 ADB Keyboard
+    logger.info(f"Checking ADB Keyboard for device {device_id}...")
+    installer = ADBKeyboardInstaller(device_id=device_id)
+    status = installer.get_status()
+
+    if not (status["installed"] and status["enabled"]):
+        logger.info(f"Setting up ADB Keyboard for device {device_id}...")
+        success, message = installer.auto_setup()
+        if success:
+            logger.info(f"✓ Device {device_id}: {message}")
+        else:
+            logger.warning(f"✗ Device {device_id}: {message}")
+    else:
+        logger.info(f"✓ Device {device_id}: ADB Keyboard ready")
 
     base_url = req_model_config.base_url or config.base_url
     api_key = req_model_config.api_key or config.api_key
