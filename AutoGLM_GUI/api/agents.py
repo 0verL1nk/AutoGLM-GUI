@@ -1,18 +1,12 @@
 """Agent lifecycle and chat routes."""
 
 import json
-import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from AutoGLM_GUI.config import config
-from AutoGLM_GUI.config_manager import (
-    delete_config_file,
-    get_config_path,
-    load_config_file,
-    save_config_file,
-)
 from AutoGLM_GUI.schemas import (
     APIAgentConfig,
     APIModelConfig,
@@ -41,6 +35,7 @@ router = APIRouter()
 def init_agent(request: InitRequest) -> dict:
     """初始化 PhoneAgent（多设备支持）。"""
     from AutoGLM_GUI.adb_plus import ADBKeyboardInstaller
+    from AutoGLM_GUI.config_manager import config_manager
     from AutoGLM_GUI.logger import logger
 
     req_model_config = request.model or APIModelConfig()
@@ -51,6 +46,10 @@ def init_agent(request: InitRequest) -> dict:
         raise HTTPException(
             status_code=400, detail="device_id is required in agent_config"
         )
+
+    # 热重载配置文件（支持运行时手动修改）
+    config_manager.load_file_config()
+    config_manager.sync_to_env()
     config.refresh_from_env()
 
     # 检查并自动安装 ADB Keyboard
@@ -261,92 +260,86 @@ def reset_agent(request: ResetRequest) -> dict:
 @router.get("/api/config", response_model=ConfigResponse)
 def get_config_endpoint() -> ConfigResponse:
     """获取当前有效配置."""
-    from AutoGLM_GUI.config import config
+    from AutoGLM_GUI.config_manager import config_manager
 
-    # 加载配置文件
-    file_config = load_config_file()
+    # 热重载：检查文件是否被外部修改
+    config_manager.load_file_config()
 
-    # 读取当前实际运行的配置
-    current_base_url = os.getenv("AUTOGLM_BASE_URL", config.base_url)
-    current_model_name = os.getenv("AUTOGLM_MODEL_NAME", config.model_name)
-    current_api_key = os.getenv("AUTOGLM_API_KEY", config.api_key)
+    # 获取有效配置和来源
+    effective_config = config_manager.get_effective_config()
+    source = config_manager.get_config_source()
 
-    # 判断配置来源
-    # 如果环境变量中有 CLI 参数设置的值，优先级最高
-    env_config = {
-        "base_url": os.getenv("AUTOGLM_BASE_URL"),
-        "model_name": os.getenv("AUTOGLM_MODEL_NAME"),
-        "api_key": os.getenv("AUTOGLM_API_KEY"),
-    }
-
-    # 检查是否有 CLI 参数（环境变量值不同于默认值且文件配置中没有对应值）
-    has_cli_config = (
-        (
-            (env_config["base_url"] and env_config["base_url"] != "")
-            and (
-                not file_config or file_config.get("base_url") != env_config["base_url"]
-            )
-        )
-        or (
-            (
-                env_config["model_name"]
-                and env_config["model_name"] != "autoglm-phone-9b"
-            )
-            and (
-                not file_config
-                or file_config.get("model_name") != env_config["model_name"]
-            )
-        )
-        or (
-            (env_config["api_key"] and env_config["api_key"] != "EMPTY")
-            and (not file_config or file_config.get("api_key") != env_config["api_key"])
-        )
-    )
-
-    if has_cli_config:
-        source = "CLI arguments"
-    elif file_config:
-        source = "config file"
-    else:
-        source = "default"
+    # 检测冲突
+    conflicts = config_manager.detect_conflicts()
 
     return ConfigResponse(
-        base_url=current_base_url,
-        model_name=current_model_name,
-        api_key=current_api_key if current_api_key != "EMPTY" else "",
-        source=source,
+        base_url=effective_config.base_url,
+        model_name=effective_config.model_name,
+        api_key=effective_config.api_key if effective_config.api_key != "EMPTY" else "",
+        source=source.value,
+        conflicts=[
+            {
+                "field": c.field,
+                "file_value": c.file_value,
+                "override_value": c.override_value,
+                "override_source": c.override_source.value,
+            }
+            for c in conflicts
+        ]
+        if conflicts
+        else None,
     )
 
 
 @router.post("/api/config")
 def save_config_endpoint(request: ConfigSaveRequest) -> dict:
     """保存配置到文件."""
+    from AutoGLM_GUI.config_manager import ConfigModel, config_manager
+
     try:
-        config_data = {
-            "base_url": request.base_url,
-            "model_name": request.model_name,
-        }
+        # Validate incoming configuration to avoid silently falling back to defaults
+        ConfigModel(
+            base_url=request.base_url,
+            model_name=request.model_name,
+            api_key=request.api_key or "EMPTY",
+        )
 
-        # 只有提供了 api_key 才保存
-        if request.api_key:
-            config_data["api_key"] = request.api_key
+        # 保存配置（合并模式，不丢失字段）
+        success = config_manager.save_file_config(
+            base_url=request.base_url,
+            model_name=request.model_name,
+            api_key=request.api_key,
+            merge_mode=True,
+        )
 
-        success = save_config_file(config_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save config")
 
-        if success:
-            # 刷新全局配置
-            os.environ["AUTOGLM_BASE_URL"] = request.base_url
-            os.environ["AUTOGLM_MODEL_NAME"] = request.model_name
-            if request.api_key:
-                os.environ["AUTOGLM_API_KEY"] = request.api_key
-            config.refresh_from_env()
+        # 同步到环境变量
+        config_manager.sync_to_env()
+        config.refresh_from_env()
 
+        # 检测冲突并返回警告
+        conflicts = config_manager.detect_conflicts()
+
+        if conflicts:
+            warnings = [
+                f"{c.field}: file value overridden by {c.override_source.value}"
+                for c in conflicts
+            ]
             return {
                 "success": True,
-                "message": f"Configuration saved to {get_config_path()}",
+                "message": f"Configuration saved to {config_manager.get_config_path()}",
+                "warnings": warnings,
             }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to save config")
+
+        return {
+            "success": True,
+            "message": f"Configuration saved to {config_manager.get_config_path()}",
+        }
+
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -354,11 +347,15 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict:
 @router.delete("/api/config")
 def delete_config_endpoint() -> dict:
     """删除配置文件."""
+    from AutoGLM_GUI.config_manager import config_manager
+
     try:
-        success = delete_config_file()
-        if success:
-            return {"success": True, "message": "Configuration deleted"}
-        else:
+        success = config_manager.delete_file_config()
+
+        if not success:
             raise HTTPException(status_code=500, detail="Failed to delete config")
+
+        return {"success": True, "message": "Configuration deleted"}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
