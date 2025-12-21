@@ -132,8 +132,18 @@ class ConfigResponse(BaseModel):
 
     base_url: str
     model_name: str
-    api_key: str  # 返回实际值
-    source: str  # "file" | "cli" | "default"
+    api_key: str  # 返回实际值（明文）
+    source: str  # "CLI arguments" | "environment variables" | "config file (...)" | "default"
+    conflicts: list[dict] | None = None  # 配置冲突信息（可选）
+    # conflicts 示例：
+    # [
+    #   {
+    #     "field": "base_url",
+    #     "file_value": "http://localhost:8080/v1",
+    #     "override_value": "https://api.example.com",
+    #     "override_source": "CLI arguments"
+    #   }
+    # ]
 
 
 class ConfigSaveRequest(BaseModel):

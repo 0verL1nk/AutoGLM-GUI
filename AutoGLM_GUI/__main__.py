@@ -1,7 +1,6 @@
 """CLI entry point for AutoGLM-GUI."""
 
 import argparse
-import os
 import sys
 import socket
 import threading
@@ -142,7 +141,7 @@ def main() -> None:
 
     from AutoGLM_GUI import server
     from AutoGLM_GUI.config import config
-    from AutoGLM_GUI.config_manager import load_config_file, merge_configs
+    from AutoGLM_GUI.config_manager import config_manager
     from AutoGLM_GUI.logger import configure_logger
 
     # Configure logging system
@@ -151,35 +150,31 @@ def main() -> None:
         log_file=None if args.no_log_file else args.log_file,
     )
 
-    # Load configuration from file
-    file_config = load_config_file()
+    # ==================== 配置系统初始化 ====================
+    # 使用统一配置管理器（四层优先级：CLI > ENV > FILE > DEFAULT）
 
-    # Build CLI config dictionary (only include provided arguments)
-    cli_config = {}
-    if args.base_url:
-        cli_config["base_url"] = args.base_url
-    if args.model:
-        cli_config["model_name"] = args.model
-    if args.apikey:
-        cli_config["api_key"] = args.apikey
+    # 1. 设置 CLI 参数配置（最高优先级）
+    config_manager.set_cli_config(
+        base_url=args.base_url, model_name=args.model, api_key=args.apikey
+    )
 
-    # Merge configurations (CLI > file > defaults)
-    merged_config = merge_configs(file_config, cli_config)
+    # 2. 加载环境变量配置
+    config_manager.load_env_config()
 
-    # Set model configuration via environment variables (survives reload)
-    os.environ["AUTOGLM_BASE_URL"] = merged_config["base_url"]
-    os.environ["AUTOGLM_MODEL_NAME"] = merged_config["model_name"]
-    os.environ["AUTOGLM_API_KEY"] = merged_config["api_key"]
+    # 3. 加载配置文件
+    config_manager.load_file_config()
 
-    # Refresh config from environment variables
+    # 4. 获取合并后的有效配置
+    effective_config = config_manager.get_effective_config()
+
+    # 5. 同步到环境变量（reload 模式需要）
+    config_manager.sync_to_env()
+
+    # 6. 刷新旧的 config 对象（保持现有代码兼容）
     config.refresh_from_env()
 
-    # Determine configuration source
-    config_source = "default"
-    if cli_config:
-        config_source = "CLI arguments"
-    elif file_config:
-        config_source = "config file (~/.config/autoglm/config.json)"
+    # 获取配置来源
+    config_source = config_manager.get_config_source()
 
     # Display startup banner
     print()
@@ -191,15 +186,15 @@ def main() -> None:
     print(f"  Server:     http://{args.host}:{args.port}")
     print()
     print("  Model Configuration:")
-    print(f"    Source:   {config_source}")
-    print(f"    Base URL: {merged_config['base_url'] or '(not set)'}")
-    print(f"    Model:    {merged_config['model_name']}")
-    if merged_config["api_key"] != "EMPTY":
+    print(f"    Source:   {config_source.value}")
+    print(f"    Base URL: {effective_config.base_url or '(not set)'}")
+    print(f"    Model:    {effective_config.model_name}")
+    if effective_config.api_key != "EMPTY":
         print("    API Key:  (configured)")
     print()
 
     # Warning if base_url is not configured
-    if not merged_config["base_url"]:
+    if not effective_config.base_url:
         print("  [!]  WARNING: base_url is not configured!")
         print("     Please configure via frontend or use --base-url")
         print()
