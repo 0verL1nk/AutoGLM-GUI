@@ -9,6 +9,8 @@ import {
   Video,
   Image as ImageIcon,
   MonitorPlay,
+  Fingerprint,
+  ArrowUpDown,
 } from 'lucide-react';
 import { ScrcpyPlayer } from './ScrcpyPlayer';
 import type {
@@ -69,12 +71,20 @@ export function DevicePanel({
     'auto' | 'video' | 'screenshot'
   >('auto');
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [feedbackType, setFeedbackType] = useState<
+    'tap' | 'swipe' | 'error' | 'success'
+  >('success');
   const feedbackTimeoutRef = useRef<number | null>(null);
 
-  const showFeedback = (message: string, duration = 2000) => {
+  const showFeedback = (
+    message: string,
+    duration = 2000,
+    type: 'tap' | 'swipe' | 'error' | 'success' = 'success'
+  ) => {
     if (feedbackTimeoutRef.current) {
       clearTimeout(feedbackTimeoutRef.current);
     }
+    setFeedbackType(type);
     setFeedbackMessage(message);
     feedbackTimeoutRef.current = setTimeout(() => {
       setFeedbackMessage(null);
@@ -356,14 +366,12 @@ export function DevicePanel({
           </div>
 
           <div className="flex items-center gap-2">
-            {!isConfigured && (
+            {!isConfigured ? (
               <Badge variant="warning">
                 <AlertCircle className="w-3 h-3 mr-1" />
                 {t.devicePanel.noConfig}
               </Badge>
-            )}
-
-            {!initialized ? (
+            ) : !initialized ? (
               <Button
                 onClick={handleInit}
                 disabled={!isConfigured || !config}
@@ -400,23 +408,21 @@ export function DevicePanel({
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
-          <div className="w-full">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
-                  <Sparkles className="h-8 w-8 text-slate-400" />
-                </div>
-                <p className="font-medium text-slate-900 dark:text-slate-100">
-                  {t.devicePanel.readyToHelp}
-                </p>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  {t.devicePanel.describeTask}
-                </p>
+        <div className="flex-1 overflow-y-auto p-4 min-h-0">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center min-h-[calc(100%-1rem)]">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
+                <Sparkles className="h-8 w-8 text-slate-400" />
               </div>
-            ) : null}
-
-            {messages.map(message => (
+              <p className="font-medium text-slate-900 dark:text-slate-100">
+                {t.devicePanel.readyToHelp}
+              </p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                {t.devicePanel.describeTask}
+              </p>
+            </div>
+          ) : (
+            messages.map(message => (
               <div
                 key={message.id}
                 className={`flex ${
@@ -439,7 +445,9 @@ export function DevicePanel({
                             Step {idx + 1}
                           </span>
                         </div>
-                        <p className="text-sm whitespace-pre-wrap">{think}</p>
+                        <p className="text-sm whitespace-pre-wrap text-slate-700 dark:text-slate-300">
+                          {think}
+                        </p>
 
                         {message.actions?.[idx] && (
                           <details className="mt-2 text-xs">
@@ -478,7 +486,7 @@ export function DevicePanel({
                             {message.content}
                           </p>
                           {message.steps !== undefined && (
-                            <p className="text-xs mt-2 opacity-60">
+                            <p className="text-xs mt-2 opacity-60 text-slate-500 dark:text-slate-400">
                               {message.steps} steps completed
                             </p>
                           )}
@@ -488,7 +496,7 @@ export function DevicePanel({
 
                     {/* Streaming indicator */}
                     {message.isStreaming && (
-                      <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
                         <Loader2 className="w-4 h-4 animate-spin" />
                         Processing...
                       </div>
@@ -497,17 +505,19 @@ export function DevicePanel({
                 ) : (
                   <div className="max-w-[75%]">
                     <div className="chat-bubble-user px-4 py-3">
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <p className="whitespace-pre-wrap text-white dark:text-white">
+                        {message.content}
+                      </p>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1 text-right">
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 text-right">
                       {message.timestamp.toLocaleTimeString()}
                     </p>
                   </div>
                 )}
               </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input area */}
@@ -547,7 +557,7 @@ export function DevicePanel({
 
       {/* Screen preview - phone aspect ratio */}
       <Card
-        className="w-[320px] flex-shrink-0 relative min-h-0 overflow-hidden bg-slate-950"
+        className="w-[320px] flex-shrink-0 relative min-h-0 overflow-hidden bg-background"
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -557,15 +567,15 @@ export function DevicePanel({
             showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
         >
-          <div className="flex items-center gap-1 bg-slate-900/90 backdrop-blur rounded-xl p-1 shadow-lg">
+          <div className="flex items-center gap-1 bg-popover/90 backdrop-blur rounded-xl p-1 shadow-lg border border-border">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => toggleDisplayMode('auto')}
               className={`h-7 px-3 text-xs rounded-lg transition-colors ${
                 displayMode === 'auto'
-                  ? 'bg-[#1d9bf0] text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
             >
               {t.devicePanel.auto}
@@ -576,8 +586,8 @@ export function DevicePanel({
               onClick={() => toggleDisplayMode('video')}
               className={`h-7 px-3 text-xs rounded-lg transition-colors ${
                 displayMode === 'video'
-                  ? 'bg-[#1d9bf0] text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
             >
               <Video className="w-3 h-3 mr-1" />
@@ -589,8 +599,8 @@ export function DevicePanel({
               onClick={() => toggleDisplayMode('screenshot')}
               className={`h-7 px-3 text-xs rounded-lg transition-colors ${
                 displayMode === 'screenshot'
-                  ? 'bg-[#1d9bf0] text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
             >
               <ImageIcon className="w-3 h-3 mr-1" />
@@ -603,7 +613,7 @@ export function DevicePanel({
         <div className="absolute bottom-4 left-4 z-10">
           <Badge
             variant="secondary"
-            className="bg-slate-900/90 text-slate-300 border border-slate-700"
+            className="bg-white/90 text-slate-700 border border-slate-200 dark:bg-slate-900/90 dark:text-slate-300 dark:border-slate-700"
           >
             {displayMode === 'auto' && t.devicePanel.auto}
             {displayMode === 'video' && (
@@ -623,8 +633,12 @@ export function DevicePanel({
 
         {/* Feedback message */}
         {feedbackMessage && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 px-3 py-2 bg-[#1d9bf0] text-white text-sm rounded-xl shadow-lg">
-            {feedbackMessage}
+          <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2 px-3 py-2 bg-[#1d9bf0] text-white text-sm rounded-xl shadow-lg">
+            {feedbackType === 'error' && <AlertCircle className="w-4 h-4" />}
+            {feedbackType === 'tap' && <Fingerprint className="w-4 h-4" />}
+            {feedbackType === 'swipe' && <ArrowUpDown className="w-4 h-4" />}
+            {feedbackType === 'success' && <CheckCircle2 className="w-4 h-4" />}
+            <span>{feedbackMessage}</span>
           </div>
         )}
 
@@ -636,18 +650,22 @@ export function DevicePanel({
             className="w-full h-full"
             enableControl={true}
             onFallback={handleFallback}
-            onTapSuccess={() => showFeedback(t.devicePanel.tapped, 2000)}
+            onTapSuccess={() => showFeedback(t.devicePanel.tapped, 2000, 'tap')}
             onTapError={error =>
               showFeedback(
                 t.devicePanel.tapError.replace('{error}', error),
-                3000
+                3000,
+                'error'
               )
             }
-            onSwipeSuccess={() => showFeedback(t.devicePanel.swiped, 2000)}
+            onSwipeSuccess={() =>
+              showFeedback(t.devicePanel.swiped, 2000, 'swipe')
+            }
             onSwipeError={error =>
               showFeedback(
                 t.devicePanel.swipeError.replace('{error}', error),
-                3000
+                3000,
+                'error'
               )
             }
             onStreamReady={handleVideoStreamReady}
@@ -655,7 +673,7 @@ export function DevicePanel({
           />
         ) : (
           /* Screenshot mode */
-          <div className="w-full h-full flex items-center justify-center bg-slate-900 min-h-0">
+          <div className="w-full h-full flex items-center justify-center bg-muted/30 min-h-0">
             {screenshot && screenshot.success ? (
               <div className="relative w-full h-full flex items-center justify-center min-h-0">
                 <img
@@ -676,13 +694,13 @@ export function DevicePanel({
                 )}
               </div>
             ) : screenshot?.error ? (
-              <div className="text-center text-red-400">
+              <div className="text-center text-destructive">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2" />
                 <p className="font-medium">{t.devicePanel.screenshotFailed}</p>
                 <p className="text-xs mt-1 opacity-60">{screenshot.error}</p>
               </div>
             ) : (
-              <div className="text-center text-slate-400">
+              <div className="text-center text-muted-foreground">
                 <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin" />
                 <p className="text-sm">{t.devicePanel.loading}</p>
               </div>
