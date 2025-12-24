@@ -27,8 +27,8 @@ AutoGLM 手机助手的现代化 Web 图形界面 - 让 AI 自动化操作 Andro
 
 | 操作系统 | 下载链接 | 说明 |
 |---------|---------|------|
-| 🍎 **macOS** (Apple Silicon) | [📦 下载 DMG](https://github.com/suyiiyii/AutoGLM-GUI/releases/download/v0.4.14/AutoGLM.GUI-0.4.14-arm64.dmg) | 适用于 M 芯片 Mac |
-| 🪟 **Windows** (x64) | [📦 下载便携版 EXE](https://github.com/suyiiyii/AutoGLM-GUI/releases/download/v0.4.14/AutoGLM.GUI.0.4.14.exe) | 适用于 Windows 10/11，免安装 |
+| 🍎 **macOS** (Apple Silicon) | [📦 下载 DMG](https://github.com/suyiiyii/AutoGLM-GUI/releases/download/v1.0.0/AutoGLM.GUI-1.0.0-arm64.dmg) | 适用于 M 芯片 Mac |
+| 🪟 **Windows** (x64) | [📦 下载便携版 EXE](https://github.com/suyiiyii/AutoGLM-GUI/releases/download/v1.0.0/AutoGLM.GUI.1.0.0.exe) | 适用于 Windows 10/11，免安装 |
 
 </div>
 
